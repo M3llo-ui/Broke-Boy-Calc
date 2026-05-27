@@ -172,7 +172,7 @@
   // ===== STATE =====
   const STORAGE_KEY = 'ledger_v1';
   const CATEGORIES = [
-    { id: 'housing',  name: 'Housing',     color: '#7eb8d9' },
+    { id: 'affirm',  name: 'Affirm',     color: '#7eb8d9' },
     { id: 'utility',  name: 'Utilities',   color: '#f4b860' },
     { id: 'debt',     name: 'Debt',        color: '#ff6b6b' },
     { id: 'food',     name: 'Food',        color: '#c4f06b' },
@@ -185,12 +185,20 @@
 
   let state = {
     bills: [],
-    income: 0, // weekly take-home
-    debtTarget: 0, // total debt remaining
+    income: 0,
+    payFrequency: 'weekly',
+    nextPayDate: null,
+    currentBalance: 0,
+    balanceUpdatedAt: null,
+    debtTarget: 0,
     weeklyDebtPayment: 0,
-    safetyBuffer: 100, // weekly $ reserved for food/gas/unexpected
-    recPeriod: 'weekly', // 'weekly' or 'monthly'
-    lastRecSnapshot: null, // for detecting bill changes since last accepted rec
+    safetyBuffer: 100,
+    recPeriod: 'weekly',
+    lastRecSnapshot: null,
+    activity: [], // {id, date, type:'pay'|'bill'|'manual'|'debt', name, amount, balanceAfter, billId?, undone?}
+    lastProcessedDate: null, // ISO date of last auto-process run
+    autoProcess: true, // toggleable
+    pendingVariable: [], // [{billId, dueDate}] - variable bills waiting for amount confirmation
   };
 
   function load() {
@@ -202,6 +210,178 @@
   function save() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
+
+  // ===== AUTO-PROCESS =====
+  // Walks forward from lastProcessedDate (or balanceUpdatedAt) to today,
+  // applies any paydays and bill due dates to the balance.
+  function autoProcess() {
+    if (!state.autoProcess) return { changed: false };
+    const today = new Date(); today.setHours(0,0,0,0);
+    // Anchor: start from the later of lastProcessedDate or balanceUpdatedAt
+    let startDate = null;
+    if (state.lastProcessedDate) startDate = new Date(state.lastProcessedDate);
+    else if (state.balanceUpdatedAt) startDate = new Date(state.balanceUpdatedAt);
+    if (!startDate) {
+      state.lastProcessedDate = today.toISOString();
+      save();
+      return { changed: false };
+    }
+    startDate.setHours(0,0,0,0);
+    if (startDate >= today) {
+      state.lastProcessedDate = today.toISOString();
+      save();
+      return { changed: false };
+    }
+
+    // Collect events between startDate (exclusive) and today (inclusive)
+    const events = [];
+
+    // Paydays
+    if (state.income > 0 && state.nextPayDate) {
+      let pd = new Date(state.nextPayDate + 'T00:00:00');
+      // Rewind if needed to find paydays since startDate
+      while (pd > startDate) {
+        const prev = new Date(pd);
+        if (state.payFrequency === 'weekly') prev.setDate(prev.getDate() - 7);
+        else if (state.payFrequency === 'biweekly') prev.setDate(prev.getDate() - 14);
+        else if (state.payFrequency === 'semimonthly') prev.setDate(prev.getDate() - 15);
+        else if (state.payFrequency === 'monthly') prev.setMonth(prev.getMonth() - 1);
+        if (prev <= startDate) break;
+        pd = prev;
+      }
+      // Now walk forward, capture any that fall in (startDate, today]
+      let safety = 0;
+      while (pd <= today && safety++ < 200) {
+        if (pd > startDate) {
+          events.push({ date: new Date(pd), type: 'pay', amount: parseFloat(state.income) || 0, name: 'Payday' });
+        }
+        pd = advancePay(pd);
+      }
+      // Advance state.nextPayDate to the next future one
+      while (new Date(state.nextPayDate + 'T00:00:00') <= today) {
+        state.nextPayDate = advancePay(new Date(state.nextPayDate + 'T00:00:00')).toISOString().slice(0,10);
+      }
+    }
+
+    // Bills
+    state.bills.forEach(b => {
+      if (!b.nextDate || !isActive(b)) return;
+      let safety = 0;
+      while (safety++ < 50) {
+        const due = new Date(b.nextDate + 'T00:00:00');
+        if (due > today) break;
+        if (due <= startDate) {
+          // shouldn't happen, but advance defensively
+          advanceBillDate(b);
+          continue;
+        }
+        // Variable bill: pause and add to pending
+        if (b.variable) {
+          if (!state.pendingVariable.some(p => p.billId === b.id && p.dueDate === b.nextDate)) {
+            state.pendingVariable.push({ billId: b.id, dueDate: b.nextDate });
+          }
+          break; // stop processing this bill until user confirms
+        }
+        events.push({ date: due, type: 'bill', amount: -(parseFloat(b.amount) || 0), name: b.name, billId: b.id });
+        advanceBillDate(b);
+      }
+    });
+
+    if (events.length === 0) {
+      state.lastProcessedDate = today.toISOString();
+      save();
+      return { changed: false };
+    }
+
+    // Sort chronologically and apply
+    events.sort((a,b) => a.date - b.date);
+    let bal = state.currentBalance || 0;
+    events.forEach(e => {
+      bal += e.amount;
+      const entry = {
+        id: 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        date: e.date.toISOString(),
+        type: e.type,
+        name: e.name,
+        amount: e.amount,
+        balanceAfter: bal,
+        billId: e.billId || null,
+        auto: true,
+      };
+      state.activity.unshift(entry);
+    });
+    // Cap activity log at 200 entries
+    if (state.activity.length > 200) state.activity = state.activity.slice(0, 200);
+
+    state.currentBalance = bal;
+    state.balanceUpdatedAt = new Date().toISOString();
+    state.lastProcessedDate = today.toISOString();
+    save();
+    return { changed: true, count: events.length };
+  }
+
+  function advanceBillDate(bill) {
+    if (!bill.nextDate) return;
+    const d = new Date(bill.nextDate + 'T00:00:00');
+    if (bill.frequency === 'weekly') d.setDate(d.getDate() + 7);
+    else if (bill.frequency === 'biweekly') d.setDate(d.getDate() + 14);
+    else if (bill.frequency === 'monthly') d.setMonth(d.getMonth() + 1);
+    else if (bill.frequency === 'one-time') { bill.nextDate = null; return; }
+    bill.nextDate = d.toISOString().slice(0,10);
+    // Decrement remaining payments for limited bills
+    if (bill.duration === 'limited' && bill.paymentsRemaining != null) {
+      bill.paymentsRemaining = Math.max(0, bill.paymentsRemaining - 1);
+    }
+  }
+
+  // Confirm a pending variable bill with the actual amount
+  function confirmVariableBill(billId, dueDate, actualAmount) {
+    const bill = state.bills.find(b => b.id === billId);
+    if (!bill) return;
+    const amt = parseFloat(actualAmount);
+    if (isNaN(amt) || amt < 0) return;
+    // Update bill's saved amount (for next time's reference)
+    bill.amount = amt;
+    // Apply to balance
+    state.currentBalance = (state.currentBalance || 0) - amt;
+    state.balanceUpdatedAt = new Date().toISOString();
+    state.activity.unshift({
+      id: 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+      date: new Date(dueDate + 'T00:00:00').toISOString(),
+      type: 'bill',
+      name: bill.name,
+      amount: -amt,
+      balanceAfter: state.currentBalance,
+      billId: bill.id,
+      auto: false,
+    });
+    // Roll bill date forward
+    if (bill.nextDate === dueDate) advanceBillDate(bill);
+    // Remove from pending
+    state.pendingVariable = state.pendingVariable.filter(p => !(p.billId === billId && p.dueDate === dueDate));
+    save();
+  }
+
+  // Skip a pending variable bill without subtracting
+  function skipVariableBill(billId, dueDate) {
+    const bill = state.bills.find(b => b.id === billId);
+    if (bill && bill.nextDate === dueDate) advanceBillDate(bill);
+    state.pendingVariable = state.pendingVariable.filter(p => !(p.billId === billId && p.dueDate === dueDate));
+    save();
+  }
+
+  // Undo a specific activity entry
+  function undoActivity(id) {
+    const idx = state.activity.findIndex(a => a.id === id);
+    if (idx === -1) return;
+    const entry = state.activity[idx];
+    if (entry.undone) return;
+    state.currentBalance = (state.currentBalance || 0) - entry.amount;
+    state.balanceUpdatedAt = new Date().toISOString();
+    entry.undone = true;
+    save();
+  }
+
 
   // ===== HELPERS =====
   const fmt = n => '$' + (Math.round(n * 100) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -246,6 +426,83 @@
     return diff;
   }
 
+  // Convert pay amount to weekly equivalent based on pay frequency
+  function weeklyIncomeEquiv() {
+    const amt = parseFloat(state.income) || 0;
+    if (state.payFrequency === 'weekly') return amt;
+    if (state.payFrequency === 'biweekly') return amt / 2;
+    if (state.payFrequency === 'semimonthly') return (amt * 24) / 52;
+    if (state.payFrequency === 'monthly') return (amt * 12) / 52;
+    return amt;
+  }
+
+  // Advance a date by one pay period
+  function advancePay(date) {
+    const d = new Date(date);
+    if (state.payFrequency === 'weekly') d.setDate(d.getDate() + 7);
+    else if (state.payFrequency === 'biweekly') d.setDate(d.getDate() + 14);
+    else if (state.payFrequency === 'semimonthly') {
+      // jump by ~15 days, alternating 1st and 15th-ish
+      d.setDate(d.getDate() + 15);
+    }
+    else if (state.payFrequency === 'monthly') d.setMonth(d.getMonth() + 1);
+    return d;
+  }
+
+  // Get the next N upcoming pay dates from today
+  function upcomingPaydays(horizonDays = 60) {
+    if (!state.nextPayDate || !state.income) return [];
+    const out = [];
+    let d = new Date(state.nextPayDate + 'T00:00:00');
+    const today = new Date(); today.setHours(0,0,0,0);
+    // If next pay date is in the past, advance until it's not
+    while (d < today) d = advancePay(d);
+    for (let i = 0; i < 30; i++) {
+      const days = daysUntil(d);
+      if (days > horizonDays) break;
+      out.push({ date: new Date(d), days, amount: parseFloat(state.income) || 0 });
+      d = advancePay(d);
+    }
+    return out;
+  }
+
+  // Project balance forward, factoring in upcoming paydays and bills
+  function projectBalance(horizonDays = 30) {
+    const events = [];
+    // Add paydays
+    upcomingPaydays(horizonDays).forEach(p => {
+      events.push({ date: p.date, amount: p.amount, type: 'pay', name: 'Payday' });
+    });
+    // Add upcoming bill payments
+    state.bills.filter(isActive).forEach(b => {
+      if (!b.nextDate) return;
+      let date = new Date(b.nextDate + 'T00:00:00');
+      let remaining = b.duration === 'forever' ? null : b.paymentsRemaining;
+      for (let i = 0; i < 12; i++) {
+        const d = daysUntil(date);
+        if (d == null || d > horizonDays) break;
+        if (remaining !== null && remaining <= 0) break;
+        if (d >= 0) {
+          events.push({ date: new Date(date), amount: -(parseFloat(b.amount) || 0), type: 'bill', name: b.name });
+        }
+        if (b.frequency === 'weekly') date.setDate(date.getDate() + 7);
+        else if (b.frequency === 'biweekly') date.setDate(date.getDate() + 14);
+        else if (b.frequency === 'monthly') date.setMonth(date.getMonth() + 1);
+        else break;
+        if (remaining !== null) remaining--;
+      }
+    });
+    events.sort((a,b) => a.date - b.date);
+    let bal = state.currentBalance || 0;
+    let minBal = bal, minDate = new Date();
+    events.forEach(e => {
+      bal += e.amount;
+      e.runningBalance = bal;
+      if (bal < minBal) { minBal = bal; minDate = e.date; }
+    });
+    return { events, finalBalance: bal, minBalance: minBal, minDate };
+  }
+
   // ===== RENDER =====
   let activeTab = 'overview';
   const root = document.getElementById('root');
@@ -260,6 +517,7 @@
         <button class="tab ${activeTab==='overview'?'active':''}" onclick="setTab('overview')">Overview</button>
         <button class="tab ${activeTab==='bills'?'active':''}" onclick="setTab('bills')">Bills</button>
         <button class="tab ${activeTab==='upcoming'?'active':''}" onclick="setTab('upcoming')">Upcoming</button>
+        <button class="tab ${activeTab==='activity'?'active':''}" onclick="setTab('activity')">Activity</button>
         <button class="tab ${activeTab==='debt'?'active':''}" onclick="setTab('debt')">Debt</button>
         <button class="tab ${activeTab==='setup'?'active':''}" onclick="setTab('setup')">Setup</button>
       </div>
@@ -277,6 +535,7 @@
     if (activeTab === 'overview') c.innerHTML = renderOverview();
     else if (activeTab === 'bills') c.innerHTML = renderBills();
     else if (activeTab === 'upcoming') c.innerHTML = renderUpcoming();
+    else if (activeTab === 'activity') c.innerHTML = renderActivity();
     else if (activeTab === 'debt') c.innerHTML = renderDebt();
     else if (activeTab === 'setup') c.innerHTML = renderSetup();
   }
@@ -285,10 +544,12 @@
   function renderOverview() {
     const activeBills = state.bills.filter(isActive);
     const weeklyBills = activeBills.reduce((s,b) => s + weeklyCost(b), 0);
-    const weeklyIncome = state.income || 0;
+    const weeklyIncome = weeklyIncomeEquiv();
     const weeklyDebt = state.weeklyDebtPayment || 0;
     const leftover = weeklyIncome - weeklyBills - weeklyDebt;
     const monthlyTotal = activeBills.reduce((s,b) => s + monthlyCost(b), 0);
+    const projection = projectBalance(30);
+    const nextPay = upcomingPaydays(60)[0];
 
     // category breakdown (monthly)
     const catTotals = {};
@@ -300,6 +561,61 @@
     const catSum = catEntries.reduce((s,[,v])=>s+v, 0) || 1;
 
     return `
+      ${state.pendingVariable && state.pendingVariable.length > 0 ? `
+      <div class="section">
+        <div class="rec-alert warn" style="background:#2e1f1a;border-color:#4a2e1a;display:block">
+          <div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px">
+            <div class="rec-alert-icon">⚡</div>
+            <div class="rec-alert-body" style="flex:1">
+              <div class="rec-alert-title" style="color:var(--warn)">Variable bill${state.pendingVariable.length>1?'s':''} need confirming</div>
+              <div>Enter the actual amount so it can be subtracted from your balance.</div>
+            </div>
+          </div>
+          ${state.pendingVariable.map(p => {
+            const b = state.bills.find(bb => bb.id === p.billId);
+            if (!b) return '';
+            return `
+              <div class="var-update" style="margin-bottom:8px;margin-top:8px">
+                <div class="bill-cat-dot" style="background:${CAT_BY_ID[b.category]?.color||'#9aa39c'}"></div>
+                <div class="var-update-info">
+                  <div style="font-weight:600">${escapeHtml(b.name)}</div>
+                  <div style="font-size:11px;color:var(--text-faint)">Due ${formatShortDate(p.dueDate)} · last was ${fmt(b.amount)}</div>
+                </div>
+                <input type="number" step="0.01" placeholder="actual" id="pv-${b.id}-${p.dueDate}" />
+                <button class="rec-apply" onclick="confirmPending('${b.id}','${p.dueDate}')">Pay</button>
+                <button onclick="skipPending('${b.id}','${p.dueDate}')" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:6px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-family:var(--sans);margin-left:4px">Skip</button>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      ${state.currentBalance > 0 || state.income > 0 ? `
+      <div class="section">
+        <div class="section-label">Right Now</div>
+        <div class="summary-grid">
+          <div class="summary-card" style="grid-column:1/-1;cursor:pointer" onclick="openBalanceModal()">
+            <div class="summary-label">Current Balance · tap to edit</div>
+            <div class="summary-value large">${fmt(state.currentBalance || 0)}</div>
+            <div class="summary-sub">${state.balanceUpdatedAt ? 'updated ' + relativeDate(state.balanceUpdatedAt) : 'tap to set'}</div>
+          </div>
+          ${nextPay ? `
+            <div class="summary-card">
+              <div class="summary-label">Next Payday</div>
+              <div class="summary-value" style="font-size:22px">${fmt(nextPay.amount)}</div>
+              <div class="summary-sub">${nextPay.days === 0 ? 'today' : nextPay.days === 1 ? 'tomorrow' : 'in ' + nextPay.days + ' days'} · ${nextPay.date.toLocaleDateString('en-US',{month:'short',day:'numeric'})}</div>
+            </div>
+          ` : ''}
+          <div class="summary-card">
+            <div class="summary-label">30-Day Projection</div>
+            <div class="summary-value ${projection.finalBalance>=0?'pos':'neg'}" style="font-size:22px">${fmt(projection.finalBalance)}</div>
+            <div class="summary-sub">${projection.minBalance < (state.currentBalance||0) ? 'low: ' + fmt(projection.minBalance) : 'all positive'}</div>
+          </div>
+        </div>
+      </div>
+      ` : ''}
+
       <div class="section">
         <div class="section-label">Weekly Leftover</div>
         <div class="summary-card hero wide">
@@ -385,6 +701,22 @@
     if (isNaN(val) || val < 0) return;
     const bill = state.bills.find(b => b.id === id);
     if (bill) { bill.amount = val; save(); render(); }
+  };
+
+  window.confirmPending = function(billId, dueDate) {
+    const input = document.getElementById(`pv-${billId}-${dueDate}`);
+    const val = parseFloat(input.value);
+    if (isNaN(val) || val < 0) { alert('Enter the actual amount'); return; }
+    confirmVariableBill(billId, dueDate, val);
+    render();
+  };
+
+  window.skipPending = function(billId, dueDate) {
+    const bill = state.bills.find(b => b.id === billId);
+    if (confirm(`Skip "${bill?.name||'this bill'}" for ${formatShortDate(dueDate)}? It won't subtract from your balance, and its next due date will advance.`)) {
+      skipVariableBill(billId, dueDate);
+      render();
+    }
   };
 
   // ----- BILLS -----
@@ -498,11 +830,76 @@
     `;
   }
 
+  // ----- ACTIVITY -----
+  function renderActivity() {
+    if (!state.activity || state.activity.length === 0) {
+      return `<div class="empty"><div class="empty-title">No activity yet</div><div>Paydays and bills will appear here as they process</div></div>`;
+    }
+    // Group by month
+    const groups = {};
+    state.activity.forEach(a => {
+      const d = new Date(a.date);
+      const key = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(a);
+    });
+    return `
+      <div class="section">
+        <div class="section-label">Activity</div>
+        <div style="font-size:12px;color:var(--text-faint);margin-bottom:14px;line-height:1.6">
+          Every payday and bill that's been auto-applied to your balance. Tap undo if something didn't actually happen.
+        </div>
+        ${Object.entries(groups).map(([month, entries]) => {
+          const monthTotal = entries.filter(e => !e.undone).reduce((s,e) => s + e.amount, 0);
+          return `
+            <div style="margin-bottom:20px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px">
+                <div class="section-label" style="margin:0">${month}</div>
+                <div style="font-family:var(--mono);font-size:12px;color:${monthTotal>=0?'var(--accent)':'var(--danger)'}">${monthTotal>=0?'+':''}${fmt(monthTotal)}</div>
+              </div>
+              <div class="calc-card" style="padding:4px 14px">
+                ${entries.map(a => {
+                  const d = new Date(a.date);
+                  const isPos = a.amount >= 0;
+                  return `
+                    <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);${a.undone?'opacity:0.4':''}">
+                      <div style="font-family:var(--mono);font-size:11px;color:var(--text-faint);width:46px;flex-shrink:0">
+                        ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+                      </div>
+                      <div style="flex:1;min-width:0">
+                        <div style="font-size:14px;font-weight:500;${a.undone?'text-decoration:line-through':''}">${escapeHtml(a.name)}</div>
+                        <div style="font-size:11px;color:var(--text-faint)">${a.type === 'pay' ? 'Income' : a.type === 'bill' ? 'Bill paid' : a.type === 'debt' ? 'Debt payment' : 'Manual'}${a.auto ? ' · auto' : ''}${a.undone ? ' · undone' : ''}</div>
+                      </div>
+                      <div style="text-align:right">
+                        <div style="font-family:var(--mono);font-weight:600;font-size:14px;color:${isPos?'var(--accent)':'var(--text)'}">${isPos?'+':''}${fmt(a.amount)}</div>
+                        <div style="font-size:10px;color:var(--text-faint);font-family:var(--mono)">bal ${fmt(a.balanceAfter)}</div>
+                      </div>
+                      ${!a.undone ? `<button onclick="undoEntry('${a.id}')" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:4px 8px;border-radius:6px;font-size:11px;cursor:pointer;font-family:var(--sans)">Undo</button>` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  window.undoEntry = function(id) {
+    const entry = state.activity.find(a => a.id === id);
+    if (!entry) return;
+    if (confirm(`Undo ${entry.name} (${fmt(entry.amount)})? Your balance will adjust by ${fmt(-entry.amount)}.`)) {
+      undoActivity(id);
+      render();
+    }
+  };
+
   // ----- DEBT -----
   function computeRecommendations() {
     const activeBills = state.bills.filter(isActive);
     const weeklyBills = activeBills.reduce((s,b) => s + weeklyCost(b), 0);
-    const weeklyIncome = state.income || 0;
+    const weeklyIncome = weeklyIncomeEquiv();
     const buffer = state.safetyBuffer || 0;
     const debt = state.debtTarget || 0;
     const available = weeklyIncome - weeklyBills - buffer;
@@ -530,9 +927,8 @@
   }
 
   function snapshotBills() {
-    // Hash of current bills + income to detect changes
     const sig = {
-      income: state.income,
+      income: weeklyIncomeEquiv(),
       bills: state.bills.filter(isActive).map(b => ({ id: b.id, a: b.amount, f: b.frequency, d: b.duration, p: b.paymentsRemaining })).sort((a,b) => a.id.localeCompare(b.id))
     };
     return JSON.stringify(sig);
@@ -705,16 +1101,54 @@
 
   // ----- SETUP -----
   function renderSetup() {
+    const weeklyEq = weeklyIncomeEquiv();
     return `
       <div class="section">
-        <div class="section-label">Income</div>
+        <div class="section-label">Current Balance</div>
         <div class="calc-card">
           <div class="field" style="margin-bottom:0">
-            <label class="field-label">Weekly Take-Home Pay</label>
-            <input type="number" step="0.01" value="${state.income || ''}" onchange="updateIncome(this.value)" placeholder="0.00" />
-            <div style="font-size:11px;color:var(--text-faint);margin-top:6px">After taxes, what hits your bank each week</div>
+            <label class="field-label">What's in your bank right now</label>
+            <input type="number" step="0.01" value="${state.currentBalance || ''}" onchange="updateBalance(this.value)" placeholder="0.00" />
+            <div style="font-size:11px;color:var(--text-faint);margin-top:6px">
+              ${state.balanceUpdatedAt ? 'Last updated ' + relativeDate(state.balanceUpdatedAt) + ' · ' : ''}Edit anytime — recommendations adjust to your actual cash on hand
+            </div>
           </div>
         </div>
+
+        <div class="section-label" style="margin-top:24px">Pay Schedule</div>
+        <div class="calc-card">
+          <div class="field">
+            <label class="field-label">Pay Amount (per paycheck, after taxes)</label>
+            <input type="number" step="0.01" value="${state.income || ''}" onchange="updateIncome(this.value)" placeholder="0.00" />
+          </div>
+
+          <div class="field">
+            <label class="field-label">Pay Frequency</label>
+            <div class="segmented" id="pay-freq" style="grid-template-columns:1fr 1fr;gap:2px">
+              <button data-v="weekly" class="${state.payFrequency==='weekly'?'active':''}" onclick="updatePayFreq('weekly')">Weekly</button>
+              <button data-v="biweekly" class="${state.payFrequency==='biweekly'?'active':''}" onclick="updatePayFreq('biweekly')">Bi-weekly</button>
+            </div>
+            <div class="segmented" id="pay-freq2" style="grid-template-columns:1fr 1fr;gap:2px;margin-top:6px">
+              <button data-v="semimonthly" class="${state.payFrequency==='semimonthly'?'active':''}" onclick="updatePayFreq('semimonthly')">Twice a month</button>
+              <button data-v="monthly" class="${state.payFrequency==='monthly'?'active':''}" onclick="updatePayFreq('monthly')">Monthly</button>
+            </div>
+          </div>
+
+          <div class="field" style="margin-bottom:0">
+            <label class="field-label">Next Payday</label>
+            <input type="date" value="${state.nextPayDate || ''}" onchange="updateNextPay(this.value)" />
+            <div style="font-size:11px;color:var(--text-faint);margin-top:6px">
+              Future paydays calculate automatically from this date
+            </div>
+          </div>
+        </div>
+
+        ${state.income > 0 && state.nextPayDate ? `
+          <div class="calc-card" style="margin-top:10px;background:linear-gradient(135deg,#1f2e1a 0%,#2a3a22 100%);border-color:#3a4f2e">
+            <div class="calc-row" style="border:none;padding:4px 0"><span style="color:var(--text-dim);font-size:12px">Weekly equivalent</span><span class="val" style="color:var(--accent)">${fmt(weeklyEq)}</span></div>
+            <div class="calc-row" style="border:none;padding:4px 0"><span style="color:var(--text-dim);font-size:12px">Monthly equivalent</span><span class="val" style="color:var(--accent)">${fmt(weeklyEq * 52 / 12)}</span></div>
+          </div>
+        ` : ''}
 
         <div class="section-label" style="margin-top:24px">Safety Buffer</div>
         <div class="calc-card">
@@ -723,6 +1157,17 @@
             <input type="number" step="5" value="${state.safetyBuffer || 0}" onchange="updateBuffer(this.value)" placeholder="100" />
             <div style="font-size:11px;color:var(--text-faint);margin-top:6px">Recommendations protect this amount before suggesting debt payments. Lower = more aggressive payoff, higher = more breathing room.</div>
           </div>
+        </div>
+
+        <div class="section-label" style="margin-top:24px">Auto Processing</div>
+        <div class="calc-card">
+          <label style="display:flex;align-items:center;gap:12px;cursor:pointer;margin:0">
+            <input type="checkbox" ${state.autoProcess?'checked':''} onchange="toggleAutoProcess(this.checked)" style="width:18px;height:18px;accent-color:var(--accent);flex-shrink:0" />
+            <div style="flex:1">
+              <div style="font-weight:500;font-size:14px">Auto-apply paydays & bills to balance</div>
+              <div style="font-size:11px;color:var(--text-faint);margin-top:2px">When on, due bills subtract from your balance automatically and paydays add. Variable bills always pause for you to confirm the amount.</div>
+            </div>
+          </label>
         </div>
 
         <div class="section-label" style="margin-top:24px">Data</div>
@@ -740,6 +1185,14 @@
 
   window.updateIncome = v => { state.income = parseFloat(v) || 0; save(); render(); };
   window.updateBuffer = v => { state.safetyBuffer = parseFloat(v) || 0; save(); render(); };
+  window.updateBalance = v => {
+    state.currentBalance = parseFloat(v) || 0;
+    state.balanceUpdatedAt = new Date().toISOString();
+    save(); render();
+  };
+  window.updatePayFreq = v => { state.payFrequency = v; save(); render(); };
+  window.updateNextPay = v => { state.nextPayDate = v || null; save(); render(); };
+  window.toggleAutoProcess = v => { state.autoProcess = !!v; save(); render(); };
 
   window.exportData = function() {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
@@ -769,7 +1222,7 @@
 
   window.confirmReset = function() {
     if (confirm('Erase everything? This cannot be undone.')) {
-      state = { bills: [], income: 0, debtTarget: 0, weeklyDebtPayment: 0, safetyBuffer: 100, recPeriod: 'weekly', lastRecSnapshot: null };
+      state = { bills: [], income: 0, payFrequency: 'weekly', nextPayDate: null, currentBalance: 0, balanceUpdatedAt: null, debtTarget: 0, weeklyDebtPayment: 0, safetyBuffer: 100, recPeriod: 'weekly', lastRecSnapshot: null, activity: [], lastProcessedDate: null, autoProcess: true, pendingVariable: [] };
       save(); render();
     }
   };
@@ -922,10 +1375,65 @@
     const d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
+  function relativeDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const days = Math.floor((Date.now() - d.getTime()) / (1000*60*60*24));
+    if (days === 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 7) return days + ' days ago';
+    if (days < 30) return Math.floor(days/7) + ' weeks ago';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // Quick balance edit modal
+  window.openBalanceModal = function() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    overlay.innerHTML = `
+      <div class="modal" style="padding-bottom:24px">
+        <div class="modal-handle"></div>
+        <div class="modal-title">Update <em>balance</em></div>
+        <div class="field">
+          <label class="field-label">What's in your bank right now?</label>
+          <input id="bal-input" type="number" step="0.01" value="${state.currentBalance || ''}" placeholder="0.00" autofocus />
+          <div style="font-size:11px;color:var(--text-faint);margin-top:6px">Projections will update based on this number</div>
+        </div>
+        <button class="btn btn-primary" id="bal-save">Save</button>
+        <button class="btn btn-secondary" style="margin-top:10px" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    setTimeout(() => overlay.querySelector('#bal-input').focus(), 100);
+    overlay.querySelector('#bal-save').onclick = () => {
+      const val = parseFloat(overlay.querySelector('#bal-input').value);
+      if (isNaN(val)) { alert('Enter a number'); return; }
+      state.currentBalance = val;
+      state.balanceUpdatedAt = new Date().toISOString();
+      save();
+      overlay.remove();
+      render();
+    };
+  };
 
   // ===== INIT =====
   load();
+  const autoResult = autoProcess();
   render();
+  if (autoResult.changed) {
+    // Show a brief toast indicating activity processed
+    setTimeout(() => showToast(`Processed ${autoResult.count} transaction${autoResult.count===1?'':'s'} since last visit`), 300);
+  }
+
+  function showToast(msg) {
+    const t = document.createElement('div');
+    t.style.cssText = 'position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:var(--accent);color:var(--bg);padding:10px 18px;border-radius:999px;font-weight:600;font-size:13px;z-index:200;box-shadow:0 8px 24px rgba(196,240,107,0.3);animation:fade 0.3s';
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  }
 </script>
 </body>
 </html>
+
