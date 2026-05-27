@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0f1410" />
+<title>Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0f1410;
+    --bg-elev: #161c18;
+    --bg-card: #1c2420;
+    --border: #2a342e;
+    --border-strong: #3a4640;
+    --text: #e8ebe6;
+    --text-dim: #9aa39c;
+    --text-faint: #677069;
+    --accent: #c4f06b;
+    --accent-dim: #8fb84a;
+    --danger: #ff6b6b;
+    --warn: #f4b860;
+    --serif: 'Fraunces', Georgia, serif;
+    --sans: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 15px; line-height: 1.5; min-height: 100vh; overscroll-behavior: none; }
+  body { padding-bottom: 90px; }
+
+  /* Header */
+  .header { padding: 28px 20px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg); z-index: 10; }
+  .header-title { font-family: var(--serif); font-weight: 500; font-size: 28px; letter-spacing: -0.02em; font-style: italic; }
+  .header-title em { color: var(--accent); font-style: normal; }
+  .header-sub { font-size: 12px; color: var(--text-faint); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 4px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg); position: sticky; top: 81px; z-index: 9; overflow-x: auto; }
+  .tab { background: transparent; border: none; color: var(--text-dim); font-family: var(--sans); font-size: 13px; font-weight: 500; padding: 8px 14px; border-radius: 999px; cursor: pointer; white-space: nowrap; transition: all 0.15s; }
+  .tab.active { background: var(--accent); color: var(--bg); }
+  .tab:not(.active):hover { color: var(--text); }
+
+  /* Sections */
+  .section { padding: 20px 16px; }
+  .section-label { font-size: 11px; color: var(--text-faint); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px; font-weight: 600; }
+
+  /* Summary cards */
+  .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+  .summary-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+  .summary-card.wide { grid-column: 1 / -1; }
+  .summary-card.hero { background: linear-gradient(135deg, #1f2e1a 0%, #2a3a22 100%); border-color: #3a4f2e; }
+  .summary-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 500; }
+  .summary-value { font-family: var(--serif); font-weight: 500; font-size: 30px; letter-spacing: -0.02em; margin-top: 6px; line-height: 1; }
+  .summary-value.large { font-size: 38px; }
+  .summary-value.pos { color: var(--accent); }
+  .summary-value.neg { color: var(--danger); }
+  .summary-sub { font-size: 12px; color: var(--text-faint); margin-top: 6px; font-family: var(--mono); }
+
+  /* Bill cards */
+  .bill-list { display: flex; flex-direction: column; gap: 8px; }
+  .bill-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; transition: all 0.15s; }
+  .bill-card:active { transform: scale(0.98); }
+  .bill-cat-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .bill-info { flex: 1; min-width: 0; }
+  .bill-name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+  .bill-meta { font-size: 12px; color: var(--text-faint); margin-top: 2px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .bill-amount { font-family: var(--mono); font-weight: 600; font-size: 15px; text-align: right; }
+  .bill-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--border); color: var(--text-dim); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600; }
+  .bill-tag.var { background: #3a2e1a; color: var(--warn); }
+  .bill-tag.fin { background: #2a3a22; color: var(--accent); }
+
+  /* Form modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; display: none; align-items: flex-end; justify-content: center; }
+  .modal-overlay.active { display: flex; animation: fade 0.2s; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .modal { background: var(--bg-elev); border-radius: 20px 20px 0 0; width: 100%; max-width: 600px; max-height: 92vh; overflow-y: auto; padding: 24px 20px 32px; border-top: 1px solid var(--border); animation: slide 0.25s; }
+  @keyframes slide { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .modal-handle { width: 40px; height: 4px; background: var(--border-strong); border-radius: 2px; margin: 0 auto 18px; }
+  .modal-title { font-family: var(--serif); font-size: 22px; font-weight: 500; letter-spacing: -0.01em; margin-bottom: 18px; }
+  .modal-title em { color: var(--accent); font-style: italic; }
+
+  .field { margin-bottom: 14px; }
+  .field-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; margin-bottom: 6px; display: block; }
+  .field input, .field select { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; color: var(--text); font-family: var(--sans); font-size: 16px; transition: border 0.15s; }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field input[type="date"] { color-scheme: dark; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* Segmented control */
+  .segmented { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; }
+  .segmented button { background: transparent; border: none; padding: 10px 8px; color: var(--text-dim); font-size: 13px; font-weight: 500; border-radius: 8px; cursor: pointer; transition: all 0.15s; font-family: var(--sans); }
+  .segmented button.active { background: var(--accent); color: var(--bg); }
+
+  /* Buttons */
+  .btn { width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: var(--sans); transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: var(--bg); }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-secondary { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid #4a2424; }
+  .btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+
+  /* FAB */
+  .fab { position: fixed; bottom: 24px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: var(--accent); color: var(--bg); border: none; font-size: 28px; font-weight: 300; cursor: pointer; box-shadow: 0 8px 24px rgba(196, 240, 107, 0.25); z-index: 50; display: flex; align-items: center; justify-content: center; }
+  .fab:active { transform: scale(0.95); }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 40px 20px; color: var(--text-faint); }
+  .empty-title { font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--text-dim); margin-bottom: 4px; }
+
+  /* Upcoming list */
+  .upcoming-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .upcoming-item:last-child { border-bottom: none; }
+  .upcoming-date { font-family: var(--mono); font-size: 11px; color: var(--text-faint); width: 60px; }
+  .upcoming-name { flex: 1; font-size: 14px; }
+  .upcoming-amount { font-family: var(--mono); font-weight: 600; font-size: 14px; }
+  .upcoming-amount.due-soon { color: var(--warn); }
+  .upcoming-amount.due-now { color: var(--danger); }
+
+  /* Calculator */
+  .calc-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+  .calc-row { display: flex; justify-content: space-between; padding: 8px 0; font-size: 14px; }
+  .calc-row.total { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 12px; font-weight: 600; }
+  .calc-row .val { font-family: var(--mono); }
+
+  /* Category breakdown */
+  .cat-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; display: flex; margin: 12px 0 16px; }
+  .cat-segment { height: 100%; }
+  .cat-list { display: flex; flex-direction: column; gap: 8px; }
+  .cat-item { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .cat-item .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .cat-item .name { flex: 1; }
+  .cat-item .amt { font-family: var(--mono); font-weight: 500; color: var(--text-dim); }
+
+  /* Edit actions */
+  .edit-hint { font-size: 11px; color: var(--text-faint); text-align: center; margin-top: 8px; font-style: italic; }
+
+  /* Recommendations */
+  .rec-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; margin-bottom: 10px; position: relative; overflow: hidden; }
+  .rec-card.featured { background: linear-gradient(135deg, #1f2e1a 0%, #2a3a22 100%); border-color: var(--accent); }
+  .rec-card.featured::before { content: 'RECOMMENDED'; position: absolute; top: 12px; right: 12px; font-size: 9px; letter-spacing: 0.12em; font-weight: 700; color: var(--accent); }
+  .rec-label { font-family: var(--serif); font-style: italic; font-size: 18px; color: var(--text-dim); margin-bottom: 8px; }
+  .rec-card.featured .rec-label { color: var(--accent); }
+  .rec-amount { font-family: var(--serif); font-weight: 500; font-size: 32px; letter-spacing: -0.02em; line-height: 1; }
+  .rec-period { font-size: 13px; color: var(--text-faint); margin-top: 4px; font-family: var(--mono); }
+  .rec-detail { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .rec-card.featured .rec-detail { border-top-color: rgba(196,240,107,0.2); }
+  .rec-toggle { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 3px; gap: 2px; margin-bottom: 14px; }
+  .rec-toggle button { background: transparent; border: none; padding: 10px 8px; color: var(--text-dim); font-size: 13px; font-weight: 500; border-radius: 8px; cursor: pointer; font-family: var(--sans); }
+  .rec-toggle button.active { background: var(--accent); color: var(--bg); }
+  .rec-alert { background: #2e1f1a; border: 1px solid #4a2e1a; border-radius: 12px; padding: 14px; margin-bottom: 14px; display: flex; gap: 12px; align-items: flex-start; }
+  .rec-alert.good { background: #1f2e1a; border-color: #2e4a1a; }
+  .rec-alert-icon { font-size: 20px; flex-shrink: 0; line-height: 1; }
+  .rec-alert-body { font-size: 13px; line-height: 1.5; }
+  .rec-alert-title { font-weight: 600; margin-bottom: 2px; color: var(--text); }
+  .rec-alert.good .rec-alert-title { color: var(--accent); }
+  .rec-alert.warn .rec-alert-title { color: var(--warn); }
+  .rec-apply { background: var(--accent); color: var(--bg); border: none; border-radius: 8px; padding: 6px 12px; font-weight: 600; font-size: 12px; margin-top: 8px; cursor: pointer; font-family: var(--sans); }
+
+  /* Variable bill quick-update */
+  .var-update { background: var(--bg-elev); border: 1px solid #3a2e1a; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+  .var-update-info { flex: 1; font-size: 13px; }
+  .var-update input { width: 90px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text); font-family: var(--mono); font-size: 14px; text-align: right; }
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script>
+  // ===== STATE =====
+  const STORAGE_KEY = 'ledger_v1';
+  const CATEGORIES = [
+    { id: 'housing',  name: 'Housing',     color: '#7eb8d9' },
+    { id: 'utility',  name: 'Utilities',   color: '#f4b860' },
+    { id: 'debt',     name: 'Debt',        color: '#ff6b6b' },
+    { id: 'food',     name: 'Food',        color: '#c4f06b' },
+    { id: 'gas',      name: 'Gas/Auto',    color: '#d97eb8' },
+    { id: 'sub',      name: 'Subscriptions', color: '#a08fff' },
+    { id: 'insurance',name: 'Insurance',   color: '#8fc4a8' },
+    { id: 'other',    name: 'Other',       color: '#9aa39c' },
+  ];
+  const CAT_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
+
+  let state = {
+    bills: [],
+    income: 0, // weekly take-home
+    debtTarget: 0, // total debt remaining
+    weeklyDebtPayment: 0,
+    safetyBuffer: 100, // weekly $ reserved for food/gas/unexpected
+    recPeriod: 'weekly', // 'weekly' or 'monthly'
+    lastRecSnapshot: null, // for detecting bill changes since last accepted rec
+  };
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) state = { ...state, ...JSON.parse(raw) };
+    } catch (e) {}
+  }
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  // ===== HELPERS =====
+  const fmt = n => '$' + (Math.round(n * 100) / 100).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fmtShort = n => '$' + Math.round(n).toLocaleString();
+
+  // Convert a bill's amount to its weekly equivalent
+  function weeklyCost(bill) {
+    const a = parseFloat(bill.amount) || 0;
+    if (bill.frequency === 'weekly') return a;
+    if (bill.frequency === 'biweekly') return a / 2;
+    if (bill.frequency === 'monthly') return (a * 12) / 52;
+    if (bill.frequency === 'one-time') return 0; // handled separately
+    return 0;
+  }
+
+  // Is this bill currently active (within duration)?
+  function isActive(bill) {
+    if (bill.duration === 'forever') return true;
+    if (bill.paymentsRemaining == null) return true;
+    return bill.paymentsRemaining > 0;
+  }
+
+  function monthlyCost(bill) {
+    const a = parseFloat(bill.amount) || 0;
+    if (!isActive(bill)) return 0;
+    if (bill.frequency === 'weekly') return (a * 52) / 12;
+    if (bill.frequency === 'biweekly') return (a * 26) / 12;
+    if (bill.frequency === 'monthly') return a;
+    return 0;
+  }
+
+  // Get next due date string from a bill
+  function nextDue(bill) {
+    if (!bill.nextDate) return null;
+    return new Date(bill.nextDate + 'T00:00:00');
+  }
+
+  function daysUntil(date) {
+    if (!date) return null;
+    const now = new Date(); now.setHours(0,0,0,0);
+    const diff = Math.round((date - now) / (1000 * 60 * 60 * 24));
+    return diff;
+  }
+
+  // ===== RENDER =====
+  let activeTab = 'overview';
+  const root = document.getElementById('root');
+
+  function render() {
+    root.innerHTML = `
+      <div class="header">
+        <div class="header-title"><em>Ledger</em></div>
+        <div class="header-sub">Bills · Budget · Debt</div>
+      </div>
+      <div class="tabs">
+        <button class="tab ${activeTab==='overview'?'active':''}" onclick="setTab('overview')">Overview</button>
+        <button class="tab ${activeTab==='bills'?'active':''}" onclick="setTab('bills')">Bills</button>
+        <button class="tab ${activeTab==='upcoming'?'active':''}" onclick="setTab('upcoming')">Upcoming</button>
+        <button class="tab ${activeTab==='debt'?'active':''}" onclick="setTab('debt')">Debt</button>
+        <button class="tab ${activeTab==='setup'?'active':''}" onclick="setTab('setup')">Setup</button>
+      </div>
+      <div id="content"></div>
+      <button class="fab" onclick="openBillModal()" aria-label="Add bill">+</button>
+    `;
+    renderContent();
+  }
+
+  function setTab(t) { activeTab = t; render(); }
+  window.setTab = setTab;
+
+  function renderContent() {
+    const c = document.getElementById('content');
+    if (activeTab === 'overview') c.innerHTML = renderOverview();
+    else if (activeTab === 'bills') c.innerHTML = renderBills();
+    else if (activeTab === 'upcoming') c.innerHTML = renderUpcoming();
+    else if (activeTab === 'debt') c.innerHTML = renderDebt();
+    else if (activeTab === 'setup') c.innerHTML = renderSetup();
+  }
+
+  // ----- OVERVIEW -----
+  function renderOverview() {
+    const activeBills = state.bills.filter(isActive);
+    const weeklyBills = activeBills.reduce((s,b) => s + weeklyCost(b), 0);
+    const weeklyIncome = state.income || 0;
+    const weeklyDebt = state.weeklyDebtPayment || 0;
+    const leftover = weeklyIncome - weeklyBills - weeklyDebt;
+    const monthlyTotal = activeBills.reduce((s,b) => s + monthlyCost(b), 0);
+
+    // category breakdown (monthly)
+    const catTotals = {};
+    activeBills.forEach(b => {
+      const m = monthlyCost(b);
+      catTotals[b.category] = (catTotals[b.category] || 0) + m;
+    });
+    const catEntries = Object.entries(catTotals).sort((a,b)=>b[1]-a[1]);
+    const catSum = catEntries.reduce((s,[,v])=>s+v, 0) || 1;
+
+    return `
+      <div class="section">
+        <div class="section-label">Weekly Leftover</div>
+        <div class="summary-card hero wide">
+          <div class="summary-label">After bills & debt payment</div>
+          <div class="summary-value large ${leftover>=0?'pos':'neg'}">${fmt(leftover)}</div>
+          <div class="summary-sub">for food · gas · everything else</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">This Week</div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="summary-label">Income</div>
+            <div class="summary-value">${fmt(weeklyIncome)}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Bills</div>
+            <div class="summary-value">${fmt(weeklyBills)}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Debt Payment</div>
+            <div class="summary-value">${fmt(weeklyDebt)}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Monthly Bills</div>
+            <div class="summary-value">${fmt(monthlyTotal)}</div>
+          </div>
+        </div>
+      </div>
+
+      ${catEntries.length > 0 ? `
+      <div class="section">
+        <div class="section-label">Where it goes (monthly)</div>
+        <div class="cat-bar">
+          ${catEntries.map(([cid, v]) => `<div class="cat-segment" style="width:${(v/catSum)*100}%;background:${CAT_BY_ID[cid]?.color||'#9aa39c'}"></div>`).join('')}
+        </div>
+        <div class="cat-list">
+          ${catEntries.map(([cid, v]) => `
+            <div class="cat-item">
+              <div class="dot" style="background:${CAT_BY_ID[cid]?.color||'#9aa39c'}"></div>
+              <div class="name">${CAT_BY_ID[cid]?.name || cid}</div>
+              <div class="amt">${fmt(v)}/mo</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      ${getVariableBills().length > 0 ? `
+      <div class="section">
+        <div class="section-label">Variable Bills · Update This Month</div>
+        ${getVariableBills().map(b => `
+          <div class="var-update">
+            <div class="bill-cat-dot" style="background:${CAT_BY_ID[b.category]?.color}"></div>
+            <div class="var-update-info">
+              <div style="font-weight:600">${b.name}</div>
+              <div style="font-size:11px;color:var(--text-faint)">Last: ${fmt(b.amount)}</div>
+            </div>
+            <input type="number" step="0.01" placeholder="new amt" id="var-${b.id}" />
+            <button class="btn-primary" style="padding:8px 12px;border:none;border-radius:8px;font-weight:600;cursor:pointer" onclick="updateVariable('${b.id}')">Set</button>
+          </div>
+        `).join('')}
+      </div>
+      ` : ''}
+
+      ${state.bills.length === 0 ? `
+        <div class="empty">
+          <div class="empty-title">Nothing tracked yet</div>
+          <div>Set your weekly income in <b>Setup</b>, then add your bills with the <b>+</b> button.</div>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  function getVariableBills() {
+    return state.bills.filter(b => b.variable && isActive(b));
+  }
+
+  window.updateVariable = function(id) {
+    const input = document.getElementById('var-' + id);
+    const val = parseFloat(input.value);
+    if (isNaN(val) || val < 0) return;
+    const bill = state.bills.find(b => b.id === id);
+    if (bill) { bill.amount = val; save(); render(); }
+  };
+
+  // ----- BILLS -----
+  function renderBills() {
+    if (state.bills.length === 0) {
+      return `<div class="empty"><div class="empty-title">No bills yet</div><div>Tap + to add your first one</div></div>`;
+    }
+    const active = state.bills.filter(isActive);
+    const finished = state.bills.filter(b => !isActive(b));
+    return `
+      <div class="section">
+        <div class="section-label">Active · ${active.length}</div>
+        <div class="bill-list">
+          ${active.map(billCard).join('')}
+        </div>
+      </div>
+      ${finished.length > 0 ? `
+        <div class="section">
+          <div class="section-label">Paid Off · ${finished.length}</div>
+          <div class="bill-list">
+            ${finished.map(billCard).join('')}
+          </div>
+        </div>
+      ` : ''}
+      <div class="edit-hint">Tap any bill to edit</div>
+    `;
+  }
+
+  function billCard(b) {
+    const cat = CAT_BY_ID[b.category] || CAT_BY_ID.other;
+    const freqLabel = { weekly: 'wk', biweekly: '2wk', monthly: 'mo', 'one-time': 'once' }[b.frequency] || '';
+    let durationLabel = '';
+    if (b.duration === 'forever') durationLabel = 'recurring';
+    else if (b.paymentsRemaining != null) durationLabel = `${b.paymentsRemaining} left`;
+    return `
+      <div class="bill-card" onclick="openBillModal('${b.id}')">
+        <div class="bill-cat-dot" style="background:${cat.color}"></div>
+        <div class="bill-info">
+          <div class="bill-name">
+            ${escapeHtml(b.name)}
+            ${b.variable ? '<span class="bill-tag var">Variable</span>' : ''}
+            ${!isActive(b) ? '<span class="bill-tag fin">Done</span>' : ''}
+          </div>
+          <div class="bill-meta">
+            <span>${cat.name}</span>
+            <span>·</span>
+            <span>${durationLabel}</span>
+            ${b.nextDate ? `<span>· next ${formatShortDate(b.nextDate)}</span>` : ''}
+          </div>
+        </div>
+        <div>
+          <div class="bill-amount">${fmt(b.amount)}</div>
+          <div class="bill-meta" style="text-align:right">/${freqLabel}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ----- UPCOMING -----
+  function renderUpcoming() {
+    const items = [];
+    const horizon = 30; // days
+    state.bills.filter(isActive).forEach(b => {
+      if (!b.nextDate) return;
+      let date = new Date(b.nextDate + 'T00:00:00');
+      let remaining = b.duration === 'forever' ? null : b.paymentsRemaining;
+      for (let i = 0; i < 12; i++) {
+        const d = daysUntil(date);
+        if (d == null || d > horizon) break;
+        if (remaining !== null && remaining <= 0) break;
+        if (d >= 0) {
+          items.push({ bill: b, date: new Date(date), daysOut: d });
+        }
+        // advance
+        if (b.frequency === 'weekly') date.setDate(date.getDate() + 7);
+        else if (b.frequency === 'biweekly') date.setDate(date.getDate() + 14);
+        else if (b.frequency === 'monthly') date.setMonth(date.getMonth() + 1);
+        else if (b.frequency === 'one-time') break;
+        if (remaining !== null) remaining--;
+      }
+    });
+    items.sort((a,b) => a.date - b.date);
+
+    const total = items.reduce((s,i) => s + (parseFloat(i.bill.amount) || 0), 0);
+
+    if (items.length === 0) {
+      return `<div class="empty"><div class="empty-title">Nothing due in 30 days</div><div>Add due dates on your bills to see them here</div></div>`;
+    }
+
+    return `
+      <div class="section">
+        <div class="section-label">Next 30 Days</div>
+        <div class="summary-card wide" style="margin-bottom:14px">
+          <div class="summary-label">Total due</div>
+          <div class="summary-value">${fmt(total)}</div>
+          <div class="summary-sub">${items.length} payment${items.length===1?'':'s'}</div>
+        </div>
+        <div class="calc-card">
+          ${items.map(i => {
+            const cls = i.daysOut <= 2 ? 'due-now' : (i.daysOut <= 7 ? 'due-soon' : '');
+            return `
+              <div class="upcoming-item">
+                <div class="upcoming-date">${formatShortDate(i.date.toISOString().slice(0,10))}<br/><span style="opacity:0.6">${i.daysOut===0?'today':i.daysOut+'d'}</span></div>
+                <div class="upcoming-name">${escapeHtml(i.bill.name)}</div>
+                <div class="upcoming-amount ${cls}">${fmt(i.bill.amount)}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  // ----- DEBT -----
+  function computeRecommendations() {
+    const activeBills = state.bills.filter(isActive);
+    const weeklyBills = activeBills.reduce((s,b) => s + weeklyCost(b), 0);
+    const weeklyIncome = state.income || 0;
+    const buffer = state.safetyBuffer || 0;
+    const debt = state.debtTarget || 0;
+    const available = weeklyIncome - weeklyBills - buffer;
+
+    // Three tiers based on what's available
+    // Conservative: 50% of available, Balanced: 75%, Aggressive: 100%
+    const tiers = [];
+    if (available > 0 && debt > 0) {
+      const recs = [
+        { label: 'Conservative', pct: 0.50, note: 'Bigger cushion for surprises' },
+        { label: 'Balanced',     pct: 0.75, note: 'Steady progress, room to breathe' },
+        { label: 'Aggressive',   pct: 1.00, note: 'Fastest payoff, tightest budget' },
+      ];
+      recs.forEach(r => {
+        const weekly = Math.floor((available * r.pct) / 5) * 5; // round to nearest $5
+        if (weekly <= 0) return;
+        const weeks = Math.ceil(debt / weekly);
+        const date = new Date(); date.setDate(date.getDate() + weeks * 7);
+        const monthly = Math.round(weekly * 52 / 12);
+        tiers.push({ ...r, weekly, monthly, weeks, months: Math.round(weeks/4.33), date, leftover: available - weekly + buffer });
+      });
+    }
+
+    return { available, weeklyBills, weeklyIncome, buffer, debt, tiers };
+  }
+
+  function snapshotBills() {
+    // Hash of current bills + income to detect changes
+    const sig = {
+      income: state.income,
+      bills: state.bills.filter(isActive).map(b => ({ id: b.id, a: b.amount, f: b.frequency, d: b.duration, p: b.paymentsRemaining })).sort((a,b) => a.id.localeCompare(b.id))
+    };
+    return JSON.stringify(sig);
+  }
+
+  function detectAlerts() {
+    const alerts = [];
+    const rec = computeRecommendations();
+    const currentPayment = state.weeklyDebtPayment || 0;
+
+    // Can't afford current payment
+    if (currentPayment > 0 && rec.available < currentPayment) {
+      const shortage = currentPayment - rec.available;
+      alerts.push({
+        type: 'warn',
+        icon: '⚠',
+        title: 'Current debt payment is too high',
+        body: `Paying ${fmt(currentPayment)}/wk leaves you ${fmt(shortage)}/wk short on bills + buffer. Consider lowering to ${fmt(Math.max(0, Math.floor(rec.available / 5) * 5))}/wk.`,
+        suggest: Math.max(0, Math.floor(rec.available / 5) * 5),
+      });
+    }
+
+    // Way under-paying — opportunity to accelerate
+    if (currentPayment > 0 && rec.available > currentPayment * 1.5 && rec.tiers.length > 0) {
+      const balanced = rec.tiers.find(t => t.label === 'Balanced') || rec.tiers[rec.tiers.length - 1];
+      if (balanced && balanced.weekly > currentPayment + 20) {
+        alerts.push({
+          type: 'good',
+          icon: '↑',
+          title: 'You can pay off debt faster',
+          body: `Your budget supports ${fmt(balanced.weekly)}/wk. That'd pay off your debt ${Math.max(0, Math.ceil(rec.debt/currentPayment) - balanced.weeks)} weeks sooner.`,
+          suggest: balanced.weekly,
+        });
+      }
+    }
+
+    // Bills changed since last accepted recommendation
+    if (state.lastRecSnapshot && state.lastRecSnapshot !== snapshotBills() && currentPayment > 0) {
+      alerts.push({
+        type: 'warn',
+        icon: '↻',
+        title: 'Your bills have changed',
+        body: 'Re-check the recommendations below — your numbers might need adjusting.',
+      });
+    }
+
+    return alerts;
+  }
+
+  function renderDebt() {
+    const debt = state.debtTarget || 0;
+    const wkPay = state.weeklyDebtPayment || 0;
+    const rec = computeRecommendations();
+    const alerts = detectAlerts();
+
+    let weeks = 0, months = 0, payoffDate = null;
+    if (debt > 0 && wkPay > 0) {
+      weeks = Math.ceil(debt / wkPay);
+      months = Math.round(weeks / 4.33 * 10) / 10;
+      payoffDate = new Date();
+      payoffDate.setDate(payoffDate.getDate() + weeks * 7);
+    }
+
+    const period = state.recPeriod || 'weekly';
+
+    return `
+      <div class="section">
+        <div class="section-label">Debt Tracker</div>
+        <div class="calc-card">
+          <div class="field">
+            <label class="field-label">Total Debt Remaining</label>
+            <input type="number" step="0.01" value="${debt}" onchange="updateDebt(this.value)" placeholder="0.00" />
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label class="field-label">Weekly Payment</label>
+            <input type="number" step="0.01" value="${wkPay}" onchange="updateWeeklyDebt(this.value)" placeholder="0.00" />
+          </div>
+        </div>
+
+        ${debt > 0 && wkPay > 0 ? `
+          <div class="summary-card hero wide" style="margin-bottom:12px">
+            <div class="summary-label">Paid off in</div>
+            <div class="summary-value large pos">${weeks} weeks</div>
+            <div class="summary-sub">${months} months · approx ${payoffDate.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
+          </div>
+        ` : ''}
+
+        ${alerts.length > 0 ? `
+          <div class="section-label" style="margin-top:20px">Heads up</div>
+          ${alerts.map(a => `
+            <div class="rec-alert ${a.type}">
+              <div class="rec-alert-icon">${a.icon}</div>
+              <div class="rec-alert-body">
+                <div class="rec-alert-title">${a.title}</div>
+                <div>${a.body}</div>
+                ${a.suggest != null ? `<button class="rec-apply" onclick="acceptRec(${a.suggest})">Use ${fmt(a.suggest)}/wk</button>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        ` : ''}
+
+        ${debt > 0 ? `
+          <div class="section-label" style="margin-top:24px">Recommendations</div>
+          ${rec.tiers.length === 0 ? `
+            <div class="calc-card">
+              <div style="color:var(--text-dim);font-size:14px;line-height:1.6">
+                ${rec.available <= 0
+                  ? `Your bills + safety buffer (${fmt(rec.buffer)}/wk) already use all your income. There's nothing left to recommend for debt right now. Try lowering your safety buffer in Setup, or look for bills to cut.`
+                  : `Add your income in Setup to see personalized recommendations.`}
+              </div>
+            </div>
+          ` : `
+            <div class="rec-toggle">
+              <button class="${period==='weekly'?'active':''}" onclick="setRecPeriod('weekly')">Weekly</button>
+              <button class="${period==='monthly'?'active':''}" onclick="setRecPeriod('monthly')">Monthly</button>
+            </div>
+            <div style="font-size:12px;color:var(--text-faint);margin-bottom:14px;line-height:1.6">
+              Based on ${fmt(rec.weeklyIncome)}/wk income, ${fmt(rec.weeklyBills)}/wk bills, and ${fmt(rec.buffer)}/wk safety buffer.
+              You have <b style="color:var(--accent)">${fmt(rec.available)}/wk</b> available for debt.
+            </div>
+            ${rec.tiers.map((t, i) => {
+              const featured = t.label === 'Balanced';
+              const amt = period === 'weekly' ? t.weekly : t.monthly;
+              const periodLabel = period === 'weekly' ? '/week' : '/month';
+              return `
+                <div class="rec-card ${featured?'featured':''}">
+                  <div class="rec-label">${t.label}</div>
+                  <div class="rec-amount">${fmt(amt)}<span style="font-size:14px;color:var(--text-faint);font-family:var(--mono);margin-left:4px">${periodLabel}</span></div>
+                  <div class="rec-period">${t.note}</div>
+                  <div class="rec-detail">
+                    <span>Payoff: <b style="color:var(--text)">${t.weeks}wk · ${t.months}mo</b></span>
+                    <span>By ${t.date.toLocaleDateString('en-US',{month:'short',year:'numeric'})}</span>
+                  </div>
+                  <div class="rec-detail" style="border-top:none;padding-top:6px">
+                    <span>Leaves ${fmt(t.leftover)}/wk for life</span>
+                    <button class="rec-apply" onclick="acceptRec(${t.weekly})">Apply</button>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          `}
+        ` : ''}
+
+        ${rec.weeklyIncome > 0 ? `
+          <div class="calc-card" style="margin-top:14px">
+            <div class="section-label" style="margin-bottom:8px">Budget math</div>
+            <div class="calc-row"><span>Weekly income</span><span class="val">${fmt(rec.weeklyIncome)}</span></div>
+            <div class="calc-row"><span>Weekly bills</span><span class="val">−${fmt(rec.weeklyBills)}</span></div>
+            <div class="calc-row"><span>Safety buffer</span><span class="val">−${fmt(rec.buffer)}</span></div>
+            <div class="calc-row total"><span>Available for debt</span><span class="val ${rec.available<0?'':''}" style="color:${rec.available<0?'var(--danger)':'var(--accent)'}">${fmt(rec.available)}</span></div>
+            <div class="calc-row" style="color:var(--text-faint);font-size:12px;margin-top:6px">
+              <span>Adjust safety buffer in Setup</span>
+              <span>currently ${fmt(rec.buffer)}/wk</span>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  window.setRecPeriod = p => { state.recPeriod = p; save(); render(); };
+  window.acceptRec = amount => {
+    state.weeklyDebtPayment = amount;
+    state.lastRecSnapshot = snapshotBills();
+    save(); render();
+  };
+
+  window.updateDebt = v => { state.debtTarget = parseFloat(v) || 0; save(); render(); };
+  window.updateWeeklyDebt = v => { state.weeklyDebtPayment = parseFloat(v) || 0; save(); render(); };
+
+  // ----- SETUP -----
+  function renderSetup() {
+    return `
+      <div class="section">
+        <div class="section-label">Income</div>
+        <div class="calc-card">
+          <div class="field" style="margin-bottom:0">
+            <label class="field-label">Weekly Take-Home Pay</label>
+            <input type="number" step="0.01" value="${state.income || ''}" onchange="updateIncome(this.value)" placeholder="0.00" />
+            <div style="font-size:11px;color:var(--text-faint);margin-top:6px">After taxes, what hits your bank each week</div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:24px">Safety Buffer</div>
+        <div class="calc-card">
+          <div class="field" style="margin-bottom:0">
+            <label class="field-label">Weekly Reserve for Food, Gas & Surprises</label>
+            <input type="number" step="5" value="${state.safetyBuffer || 0}" onchange="updateBuffer(this.value)" placeholder="100" />
+            <div style="font-size:11px;color:var(--text-faint);margin-top:6px">Recommendations protect this amount before suggesting debt payments. Lower = more aggressive payoff, higher = more breathing room.</div>
+          </div>
+        </div>
+
+        <div class="section-label" style="margin-top:24px">Data</div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="exportData()">Export</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('import-file').click()">Import</button>
+        </div>
+        <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)" />
+        <button class="btn btn-danger" style="margin-top:10px" onclick="confirmReset()">Reset All Data</button>
+
+        <div class="edit-hint" style="margin-top:20px">Your data lives only on this device · back it up by exporting</div>
+      </div>
+    `;
+  }
+
+  window.updateIncome = v => { state.income = parseFloat(v) || 0; save(); render(); };
+  window.updateBuffer = v => { state.safetyBuffer = parseFloat(v) || 0; save(); render(); };
+
+  window.exportData = function() {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'ledger-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  window.importData = function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (confirm('Replace current data with imported file?')) {
+          state = { ...state, ...data };
+          save(); render();
+        }
+      } catch (err) { alert('Invalid backup file'); }
+    };
+    reader.readAsText(file);
+  };
+
+  window.confirmReset = function() {
+    if (confirm('Erase everything? This cannot be undone.')) {
+      state = { bills: [], income: 0, debtTarget: 0, weeklyDebtPayment: 0, safetyBuffer: 100, recPeriod: 'weekly', lastRecSnapshot: null };
+      save(); render();
+    }
+  };
+
+  // ===== MODAL =====
+  function openBillModal(id) {
+    const isEdit = !!id;
+    const bill = isEdit ? state.bills.find(b => b.id === id) : {
+      name: '', amount: '', category: 'other',
+      frequency: 'monthly', duration: 'forever',
+      paymentsRemaining: null, variable: false, nextDate: ''
+    };
+    if (!bill) return;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay active';
+    overlay.onclick = e => { if (e.target === overlay) closeModal(overlay); };
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-handle"></div>
+        <div class="modal-title">${isEdit ? 'Edit' : '<em>Add</em>'} bill</div>
+
+        <div class="field">
+          <label class="field-label">Name</label>
+          <input id="m-name" type="text" value="${escapeHtml(bill.name)}" placeholder="e.g. Electric bill" />
+        </div>
+
+        <div class="field-row">
+          <div class="field">
+            <label class="field-label">Amount</label>
+            <input id="m-amount" type="number" step="0.01" value="${bill.amount}" placeholder="0.00" />
+          </div>
+          <div class="field">
+            <label class="field-label">Category</label>
+            <select id="m-category">
+              ${CATEGORIES.map(c => `<option value="${c.id}" ${bill.category===c.id?'selected':''}>${c.name}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Frequency</label>
+          <div class="segmented" id="m-freq">
+            <button data-v="weekly" class="${bill.frequency==='weekly'?'active':''}">Weekly</button>
+            <button data-v="biweekly" class="${bill.frequency==='biweekly'?'active':''}">Bi-weekly</button>
+            <button data-v="monthly" class="${bill.frequency==='monthly'?'active':''}">Monthly</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="field-label">Duration</label>
+          <div class="segmented" id="m-dur" style="grid-template-columns:1fr 1fr">
+            <button data-v="forever" class="${bill.duration==='forever'?'active':''}">Recurring forever</button>
+            <button data-v="limited" class="${bill.duration==='limited'?'active':''}">Set # of payments</button>
+          </div>
+        </div>
+
+        <div class="field" id="m-payments-wrap" style="display:${bill.duration==='limited'?'block':'none'}">
+          <label class="field-label">Payments remaining</label>
+          <input id="m-payments" type="number" step="1" min="1" value="${bill.paymentsRemaining || ''}" placeholder="e.g. 6" />
+        </div>
+
+        <div class="field">
+          <label class="field-label">Next Due Date <span style="text-transform:none;color:var(--text-faint)">(optional)</span></label>
+          <input id="m-date" type="date" value="${bill.nextDate || ''}" />
+        </div>
+
+        <div class="field">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <input id="m-variable" type="checkbox" ${bill.variable?'checked':''} style="width:18px;height:18px;accent-color:var(--accent)" />
+            <span style="font-size:14px">Variable amount (fluctuates each cycle)</span>
+          </label>
+        </div>
+
+        <button class="btn btn-primary" id="m-save">${isEdit ? 'Save changes' : 'Add bill'}</button>
+        ${isEdit ? `<button class="btn btn-danger" style="margin-top:10px" id="m-delete">Delete</button>` : ''}
+        <button class="btn btn-secondary" style="margin-top:10px" id="m-cancel">Cancel</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // freq segmented
+    const freqBtns = overlay.querySelectorAll('#m-freq button');
+    let curFreq = bill.frequency;
+    freqBtns.forEach(b => b.onclick = () => {
+      freqBtns.forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      curFreq = b.dataset.v;
+    });
+
+    // duration segmented
+    const durBtns = overlay.querySelectorAll('#m-dur button');
+    let curDur = bill.duration;
+    durBtns.forEach(b => b.onclick = () => {
+      durBtns.forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      curDur = b.dataset.v;
+      overlay.querySelector('#m-payments-wrap').style.display = curDur === 'limited' ? 'block' : 'none';
+    });
+
+    overlay.querySelector('#m-save').onclick = () => {
+      const name = overlay.querySelector('#m-name').value.trim();
+      const amount = parseFloat(overlay.querySelector('#m-amount').value);
+      if (!name) { alert('Name required'); return; }
+      if (isNaN(amount) || amount < 0) { alert('Valid amount required'); return; }
+      const data = {
+        id: isEdit ? bill.id : 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        name, amount,
+        category: overlay.querySelector('#m-category').value,
+        frequency: curFreq,
+        duration: curDur,
+        paymentsRemaining: curDur === 'limited' ? (parseInt(overlay.querySelector('#m-payments').value) || null) : null,
+        variable: overlay.querySelector('#m-variable').checked,
+        nextDate: overlay.querySelector('#m-date').value || null,
+      };
+      if (isEdit) {
+        const idx = state.bills.findIndex(b => b.id === bill.id);
+        state.bills[idx] = data;
+      } else {
+        state.bills.push(data);
+      }
+      save();
+      closeModal(overlay);
+      render();
+    };
+
+    if (isEdit) {
+      overlay.querySelector('#m-delete').onclick = () => {
+        if (confirm(`Delete "${bill.name}"?`)) {
+          state.bills = state.bills.filter(b => b.id !== bill.id);
+          save();
+          closeModal(overlay);
+          render();
+        }
+      };
+    }
+
+    overlay.querySelector('#m-cancel').onclick = () => closeModal(overlay);
+  }
+  window.openBillModal = openBillModal;
+
+  function closeModal(overlay) { overlay.remove(); }
+
+  // ===== UTILITIES =====
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function formatShortDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // ===== INIT =====
+  load();
+  render();
+</script>
+</body>
+</html>
